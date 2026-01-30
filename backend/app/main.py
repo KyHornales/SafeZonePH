@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import create_engine, Column, Integer, String, DateTime, Boolean, Float
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
 from datetime import datetime, timedelta
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 from jose import JWTError, jwt
 import os
 import hashlib
@@ -128,11 +128,14 @@ Base.metadata.create_all(bind=engine)
 class UserCreate(BaseModel):
     email: EmailStr
     password: str
-    first_name: str
-    last_name: str
+    first_name: str = Field(..., alias='firstName')
+    last_name: str = Field(..., alias='lastName')
     phone: Optional[str] = None
     barangay: Optional[str] = None
     city: Optional[str] = None
+
+    class Config:
+        populate_by_name = True
 
 class UserLogin(BaseModel):
     email: EmailStr
