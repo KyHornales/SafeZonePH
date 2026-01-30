@@ -1,0 +1,65 @@
+/** @type {import('tailwindcss').Config} */
+module.exports = {
+  content: [
+    "./src/**/*.{js,jsx,ts,tsx}",
+  ],
+  theme: {
+    extend: {
+      colors: {
+        primary: {
+          DEFAULT: '#7C9A8E',
+          50: '#F0F5F3',
+          100: '#E1EBE7',
+          200: '#C3D7CF',
+          300: '#A5C3B7',
+          400: '#87AF9F',
+          500: '#7C9A8E',
+          600: '#5F8071',
+          700: '#476054',
+          800: '#2F4038',
+          900: '#18201C',
+        },
+        'deep-slate': {
+          DEFAULT: '#2E3331',
+          50: '#F4F5F5',
+          100: '#E8EAEA',
+          200: '#C5C9C8',
+          300: '#A3A8A6',
+          400: '#5E6563',
+          500: '#2E3331',
+          600: '#292E2C',
+          700: '#1C1F1E',
+          800: '#151716',
+          900: '#0E0F0F',
+        },
+        'warm-sand': {
+          DEFAULT: '#F2EDE4',
+          50: '#FFFFFF',
+          100: '#FDFCFA',
+          200: '#F9F6F0',
+          300: '#F2EDE4',
+          400: '#E6DCC8',
+          500: '#DACBAC',
+        },
+        'burnt-orange': {
+          DEFAULT: '#C45A2A',
+          50: '#FCF4F0',
+          100: '#F9E9E0',
+          200: '#F0C9B3',
+          300: '#E7A986',
+          400: '#DE8959',
+          500: '#C45A2A',
+          600: '#A44B23',
+          700: '#7B381A',
+          800: '#522512',
+          900: '#291309',
+        },
+      },
+      fontFamily: {
+        sans: ['Plus Jakarta Sans', 'system-ui', 'sans-serif'],
+        display: ['Fraunces', 'serif'],
+      },
+    },
+  },
+  plugins: [],
+}

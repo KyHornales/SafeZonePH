@@ -1,0 +1,6 @@
+1. not yet mobile responsive
+2. there are no database (oks lang naman if hindi nyo need baguhin ung data, since ung mock data is hardcoded palang)
+2.1. dahil walang database, di naguupdate after mag check in sa ibang tao
+2.2. di rin gumagana ung create new task becoz walang database
+2.3. find new buddy not working
+3. profile picture not working

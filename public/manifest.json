@@ -1,0 +1,34 @@
+{
+  "short_name": "SafeZonePH",
+  "name": "SafeZonePH - Community Disaster Resilience",
+  "description": "A community-led disaster resilience platform empowering Filipino communities through buddy systems, resource coordination, and real-time emergency management.",
+  "icons": [
+    {
+      "src": "favicon.ico",
+      "sizes": "64x64 32x32 24x24 16x16",
+      "type": "image/x-icon"
+    },
+    {
+      "src": "logo192.png",
+      "type": "image/png",
+      "sizes": "192x192",
+      "purpose": "maskable any"
+    },
+    {
+      "src": "logo512.png",
+      "type": "image/png",
+      "sizes": "512x512",
+      "purpose": "maskable any"
+    }
+  ],
+  "start_url": "/",
+  "display": "standalone",
+  "theme_color": "#7C9A8E",
+  "background_color": "#F2EDE4",
+  "orientation": "portrait-primary",
+  "categories": ["social", "lifestyle", "utilities"],
+  "lang": "en-PH",
+  "dir": "ltr",
+  "scope": "/",
+  "prefer_related_applications": false
+}
