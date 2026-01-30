@@ -14,10 +14,10 @@ import {
   ResourcesPage,
   PointsPage,
   ProfilePage,
-  ChatPage,
   CommunityHubPage,
   SkillSharingPage,
 } from './pages';
+import ChatPage from './pages/ChatPage';
 import ForgotPasswordPage from './pages/ForgotPasswordPage';
 import ResetPasswordPage from './pages/ResetPasswordPage';
 import VerifyEmailPage from './pages/VerifyEmailPage';

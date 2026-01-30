@@ -53,9 +53,13 @@ const CommunityHubPage: React.FC = () => {
       const response = await apiService.getCommunityTasks();
       if (response.data) {
         setCommunityTasks(response.data);
+      } else if (response.error) {
+        console.error('Error from API:', response.error);
+        showToast('error', `Failed to load community tasks: ${response.error}`);
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error loading community tasks:', error);
+      showToast('error', error.message || 'Failed to load community tasks');
     } finally {
       setIsLoadingTasks(false);
     }

@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useLocation } from 'react-router-dom';
 import { 
   Search, Plus, CheckCircle2, Clock, AlertCircle,
   MapPin, Calendar, Award
@@ -14,6 +15,7 @@ import { Task } from '../types';
 import apiService from '../services/api';
 
 const TasksPage: React.FC = () => {
+  const location = useLocation();
   const { user, updateUser } = useAuth();
   const { tasks, setTasks, addTask, updateTask } = useTasksStore();
   const { showToast } = useToast();
@@ -48,6 +50,15 @@ const TasksPage: React.FC = () => {
     { value: 'in_progress', label: 'In Progress', icon: AlertCircle, color: 'text-blue-500' },
     { value: 'completed', label: 'Completed', icon: CheckCircle2, color: 'text-green-500' },
   ];
+
+  // Check if we should open create task modal from navigation state
+  useEffect(() => {
+    if (location.state?.openCreateTask) {
+      setShowCreateModal(true);
+      // Clear the state
+      window.history.replaceState({}, document.title);
+    }
+  }, [location]);
 
   // Load tasks from API
   useEffect(() => {

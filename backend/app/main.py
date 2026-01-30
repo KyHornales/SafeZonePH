@@ -121,6 +121,27 @@ class CommunityTask(Base):
     created_by = Column(Integer, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
+class Conversation(Base):
+    __tablename__ = "conversations"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user1_id = Column(Integer, nullable=False)
+    user2_id = Column(Integer, nullable=False)
+    last_message = Column(String, nullable=True)
+    last_message_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+class Message(Base):
+    __tablename__ = "messages"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    conversation_id = Column(Integer, nullable=False)
+    sender_id = Column(Integer, nullable=False)
+    receiver_id = Column(Integer, nullable=False)
+    content = Column(String, nullable=False)
+    read = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
 # Create tables
 Base.metadata.create_all(bind=engine)
 
@@ -274,6 +295,35 @@ class CommunityTaskResponse(BaseModel):
     volunteer_name: Optional[str]
     created_by: Optional[int]
     created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+# Message Schemas
+class MessageCreate(BaseModel):
+    receiver_id: int
+    content: str
+
+class MessageResponse(BaseModel):
+    id: int
+    conversation_id: int
+    sender_id: int
+    receiver_id: int
+    content: str
+    read: bool
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+class ConversationResponse(BaseModel):
+    id: int
+    participant_id: int
+    participant_name: str
+    participant_email: str
+    last_message: Optional[str]
+    last_message_at: datetime
+    unread_count: int
 
     class Config:
         from_attributes = True
@@ -471,18 +521,18 @@ def update_task(task_id: int, task_update: TaskUpdate, current_user: User = Depe
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
     
+    # Save old status BEFORE updating
+    old_status = task.status
+
     # Update task fields
     for field, value in task_update.dict(exclude_unset=True).items():
         setattr(task, field, value)
-    
-    db.commit()
-    db.refresh(task)
-    
-    # If task was completed, award points
-    if task_update.status == "completed" and task.status != "completed":
+
+    # If task was just completed (status changed from non-completed to completed), award points
+    if task_update.status == "completed" and old_status != "completed":
         current_user.points += task.points
         current_user.rank = calculate_rank(current_user.points)
-        
+
         # Add to points history
         points_entry = PointsHistory(
             user_id=current_user.id,
@@ -491,13 +541,33 @@ def update_task(task_id: int, task_update: TaskUpdate, current_user: User = Depe
             points=task.points
         )
         db.add(points_entry)
-        db.commit()
-    
-    return TaskResponse.from_orm(task)
 
+    db.commit()
+    db.refresh(task)
+    
+    # Return the updated task
+    return {
+        "id": task.id,
+        "title": task.title,
+        "description": task.description,
+        "category": task.category,
+        "priority": task.priority,
+        "status": task.status,
+        "points": task.points,
+        "dueDate": task.due_date.isoformat() if task.due_date else None,
+        "assignedTo": task.assigned_to,
+        "location": task.location,
+        "createdAt": task.created_at.isoformat() if task.created_at else None
+    }
+
+# Points History Endpoint
 @app.get("/api/points/history")
 def get_points_history(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    history = db.query(PointsHistory).filter(PointsHistory.user_id == current_user.id).order_by(PointsHistory.created_at.desc()).all()
+    """Get points history for the current user"""
+    history = db.query(PointsHistory).filter(
+        PointsHistory.user_id == current_user.id
+    ).order_by(PointsHistory.created_at.desc()).all()
+    
     return [
         {
             "id": entry.id,
@@ -717,6 +787,594 @@ def seed_community_tasks(db: Session = Depends(get_db)):
     
     db.commit()
     return {"message": f"Successfully created {len(initial_tasks)} community tasks"}
+
+# ==========================================
+# BUDDY CHECK-IN & NOTIFICATION SYSTEM
+# ==========================================
+
+class BuddySession(Base):
+    __tablename__ = "buddy_sessions"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, nullable=False)
+    buddy_id = Column(Integer, nullable=False)
+    status = Column(String, default="active")  # active, completed, emergency
+    check_in_interval = Column(Integer, default=30)  # minutes
+    last_check_in = Column(DateTime, default=datetime.utcnow)
+    location = Column(String, nullable=True)
+    destination = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    ended_at = Column(DateTime, nullable=True)
+
+class Notification(Base):
+    __tablename__ = "notifications"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, nullable=False)
+    type = Column(String, nullable=False)  # buddy_request, check_in_reminder, missed_check_in, emergency, system
+    title = Column(String, nullable=False)
+    message = Column(String, nullable=False)
+    related_id = Column(Integer, nullable=True)  # Related buddy session, task, etc.
+    is_read = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+# Create the new tables
+BuddySession.__table__.create(bind=engine, checkfirst=True)
+Notification.__table__.create(bind=engine, checkfirst=True)
+
+# Pydantic models for buddy system
+class BuddySessionCreate(BaseModel):
+    buddy_id: int
+    check_in_interval: int = 30
+    location: Optional[str] = None
+    destination: Optional[str] = None
+
+class NotificationCreate(BaseModel):
+    type: str
+    title: str
+    message: str
+    related_id: Optional[int] = None
+
+# Buddy Session Endpoints
+@app.post("/api/buddy/sessions")
+def create_buddy_session(
+    session_data: BuddySessionCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Start a new buddy session"""
+    # Check if buddy exists
+    buddy = db.query(User).filter(User.id == session_data.buddy_id).first()
+    if not buddy:
+        raise HTTPException(status_code=404, detail="Buddy not found")
+    
+    # Create session
+    new_session = BuddySession(
+        user_id=current_user.id,
+        buddy_id=session_data.buddy_id,
+        check_in_interval=session_data.check_in_interval,
+        location=session_data.location,
+        destination=session_data.destination
+    )
+    db.add(new_session)
+    
+    # Notify buddy
+    notification = Notification(
+        user_id=session_data.buddy_id,
+        type="buddy_request",
+        title="New Buddy Session Started",
+        message=f"{current_user.first_name} {current_user.last_name} has started a buddy session with you.",
+        related_id=new_session.id
+    )
+    db.add(notification)
+    
+    db.commit()
+    db.refresh(new_session)
+    
+    return {
+        "id": new_session.id,
+        "userId": new_session.user_id,
+        "buddyId": new_session.buddy_id,
+        "status": new_session.status,
+        "checkInInterval": new_session.check_in_interval,
+        "lastCheckIn": new_session.last_check_in.isoformat() if new_session.last_check_in else None,
+        "location": new_session.location,
+        "destination": new_session.destination,
+        "createdAt": new_session.created_at.isoformat() if new_session.created_at else None
+    }
+
+@app.get("/api/buddy/sessions")
+def get_buddy_sessions(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get all buddy sessions for current user"""
+    sessions = db.query(BuddySession).filter(
+        (BuddySession.user_id == current_user.id) | (BuddySession.buddy_id == current_user.id)
+    ).order_by(BuddySession.created_at.desc()).all()
+    
+    result = []
+    for s in sessions:
+        # Get buddy info
+        if s.user_id == current_user.id:
+            other_user = db.query(User).filter(User.id == s.buddy_id).first()
+            role = "initiator"
+        else:
+            other_user = db.query(User).filter(User.id == s.user_id).first()
+            role = "buddy"
+        
+        result.append({
+            "id": s.id,
+            "role": role,
+            "buddyName": f"{other_user.first_name} {other_user.last_name}" if other_user else "Unknown",
+            "buddyId": other_user.id if other_user else None,
+            "status": s.status,
+            "checkInInterval": s.check_in_interval,
+            "lastCheckIn": s.last_check_in.isoformat() if s.last_check_in else None,
+            "location": s.location,
+            "destination": s.destination,
+            "createdAt": s.created_at.isoformat() if s.created_at else None
+        })
+    
+    return result
+
+@app.get("/api/buddy/sessions/active")
+def get_active_buddy_session(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get currently active buddy session"""
+    session = db.query(BuddySession).filter(
+        ((BuddySession.user_id == current_user.id) | (BuddySession.buddy_id == current_user.id)),
+        BuddySession.status == "active"
+    ).first()
+    
+    if not session:
+        return None
+    
+    # Get buddy info
+    if session.user_id == current_user.id:
+        buddy = db.query(User).filter(User.id == session.buddy_id).first()
+        role = "initiator"
+    else:
+        buddy = db.query(User).filter(User.id == session.user_id).first()
+        role = "buddy"
+    
+    return {
+        "id": session.id,
+        "role": role,
+        "buddyName": f"{buddy.first_name} {buddy.last_name}" if buddy else "Unknown",
+        "buddyId": buddy.id if buddy else None,
+        "status": session.status,
+        "checkInInterval": session.check_in_interval,
+        "lastCheckIn": session.last_check_in.isoformat() if session.last_check_in else None,
+        "location": session.location,
+        "destination": session.destination,
+        "createdAt": session.created_at.isoformat() if session.created_at else None
+    }
+
+@app.post("/api/buddy/sessions/{session_id}/check-in")
+def buddy_check_in(
+    session_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Perform a check-in for a buddy session"""
+    session = db.query(BuddySession).filter(BuddySession.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    if session.user_id != current_user.id and session.buddy_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized for this session")
+    
+    if session.status != "active":
+        raise HTTPException(status_code=400, detail="Session is not active")
+    
+    # Update last check-in time
+    session.last_check_in = datetime.utcnow()
+    
+    # Get buddy to notify
+    buddy_id = session.buddy_id if session.user_id == current_user.id else session.user_id
+    
+    # Notify buddy of check-in
+    notification = Notification(
+        user_id=buddy_id,
+        type="check_in_success",
+        title="Buddy Checked In",
+        message=f"{current_user.first_name} has checked in safely.",
+        related_id=session_id
+    )
+    db.add(notification)
+    
+    # Award points for regular check-ins
+    current_user.points += 5
+    points_entry = PointsHistory(
+        user_id=current_user.id,
+        type="buddy_check_in",
+        description="Regular buddy check-in",
+        points=5
+    )
+    db.add(points_entry)
+    
+    db.commit()
+    
+    return {
+        "message": "Check-in successful",
+        "lastCheckIn": session.last_check_in.isoformat(),
+        "pointsEarned": 5
+    }
+
+@app.post("/api/buddy/sessions/{session_id}/missed")
+def missed_check_in(
+    session_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Report a missed check-in (triggers notifications)"""
+    session = db.query(BuddySession).filter(BuddySession.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    # Determine who missed and who to notify
+    if session.user_id == current_user.id:
+        missed_user = current_user
+        buddy_id = session.buddy_id
+    else:
+        missed_user = db.query(User).filter(User.id == session.user_id).first()
+        buddy_id = session.buddy_id if session.buddy_id != current_user.id else session.user_id
+    
+    # Create urgent notification for buddy
+    notification = Notification(
+        user_id=buddy_id,
+        type="missed_check_in",
+        title="⚠️ Missed Check-In Alert",
+        message=f"{missed_user.first_name} {missed_user.last_name} missed their check-in! Please try to contact them.",
+        related_id=session_id
+    )
+    db.add(notification)
+    db.commit()
+    
+    return {"message": "Missed check-in reported", "notificationSent": True}
+
+@app.post("/api/buddy/sessions/{session_id}/emergency")
+def buddy_emergency(
+    session_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Trigger emergency for a buddy session"""
+    session = db.query(BuddySession).filter(BuddySession.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    session.status = "emergency"
+    
+    # Notify buddy
+    buddy_id = session.buddy_id if session.user_id == current_user.id else session.user_id
+    
+    notification = Notification(
+        user_id=buddy_id,
+        type="emergency",
+        title="🚨 EMERGENCY ALERT",
+        message=f"{current_user.first_name} {current_user.last_name} triggered an emergency! Last known location: {session.location or 'Unknown'}",
+        related_id=session_id
+    )
+    db.add(notification)
+    db.commit()
+    
+    return {"message": "Emergency triggered", "sessionStatus": "emergency"}
+
+@app.post("/api/buddy/sessions/{session_id}/end")
+def end_buddy_session(
+    session_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """End a buddy session"""
+    session = db.query(BuddySession).filter(BuddySession.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    if session.user_id != current_user.id and session.buddy_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized for this session")
+    
+    session.status = "completed"
+    session.ended_at = datetime.utcnow()
+    
+    # Notify buddy
+    buddy_id = session.buddy_id if session.user_id == current_user.id else session.user_id
+    
+    notification = Notification(
+        user_id=buddy_id,
+        type="session_ended",
+        title="Buddy Session Ended",
+        message=f"{current_user.first_name} has ended the buddy session safely.",
+        related_id=session_id
+    )
+    db.add(notification)
+    
+    # Award completion points
+    current_user.points += 25
+    points_entry = PointsHistory(
+        user_id=current_user.id,
+        type="buddy_session_completed",
+        description="Completed buddy session",
+        points=25
+    )
+    db.add(points_entry)
+    
+    db.commit()
+    
+    return {"message": "Session ended successfully", "pointsEarned": 25}
+
+# Notification Endpoints
+@app.get("/api/notifications")
+def get_notifications(
+    unread_only: bool = False,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get all notifications for current user"""
+    query = db.query(Notification).filter(Notification.user_id == current_user.id)
+    
+    if unread_only:
+        query = query.filter(Notification.is_read == False)
+    
+    notifications = query.order_by(Notification.created_at.desc()).limit(50).all()
+    
+    return [
+        {
+            "id": n.id,
+            "type": n.type,
+            "title": n.title,
+            "message": n.message,
+            "relatedId": n.related_id,
+            "isRead": n.is_read,
+            "createdAt": n.created_at.isoformat() if n.created_at else None
+        }
+        for n in notifications
+    ]
+
+@app.get("/api/notifications/unread-count")
+def get_unread_count(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get count of unread notifications"""
+    count = db.query(Notification).filter(
+        Notification.user_id == current_user.id,
+        Notification.is_read == False
+    ).count()
+    
+    return {"unreadCount": count}
+
+@app.put("/api/notifications/{notification_id}/read")
+def mark_notification_read(
+    notification_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Mark a notification as read"""
+    notification = db.query(Notification).filter(
+        Notification.id == notification_id,
+        Notification.user_id == current_user.id
+    ).first()
+    
+    if not notification:
+        raise HTTPException(status_code=404, detail="Notification not found")
+    
+    notification.is_read = True
+    db.commit()
+    
+    return {"message": "Notification marked as read"}
+
+@app.put("/api/notifications/read-all")
+def mark_all_notifications_read(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Mark all notifications as read"""
+    db.query(Notification).filter(
+        Notification.user_id == current_user.id,
+        Notification.is_read == False
+    ).update({"is_read": True})
+    
+    db.commit()
+    
+    return {"message": "All notifications marked as read"}
+
+@app.post("/api/notifications")
+def create_notification(
+    notification_data: NotificationCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Create a notification (for system use)"""
+    notification = Notification(
+        user_id=current_user.id,
+        type=notification_data.type,
+        title=notification_data.title,
+        message=notification_data.message,
+        related_id=notification_data.related_id
+    )
+    db.add(notification)
+    db.commit()
+    db.refresh(notification)
+    
+    return {
+        "id": notification.id,
+        "type": notification.type,
+        "title": notification.title,
+        "message": notification.message,
+        "createdAt": notification.created_at.isoformat() if notification.created_at else None
+    }
+
+# ===== MESSAGING ENDPOINTS =====
+
+@app.get("/api/conversations", response_model=list[ConversationResponse])
+def get_conversations(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get all conversations for the current user"""
+    # Find all conversations where user is participant
+    conversations_data = []
+    
+    # Get conversations where user is user1
+    convs1 = db.query(Conversation).filter(Conversation.user1_id == current_user.id).all()
+    # Get conversations where user is user2
+    convs2 = db.query(Conversation).filter(Conversation.user2_id == current_user.id).all()
+    
+    all_convs = convs1 + convs2
+    
+    for conv in all_convs:
+        # Determine the other participant
+        participant_id = conv.user2_id if conv.user1_id == current_user.id else conv.user1_id
+        participant = db.query(User).filter(User.id == participant_id).first()
+        
+        if not participant:
+            continue
+        
+        # Count unread messages
+        unread_count = db.query(Message).filter(
+            Message.conversation_id == conv.id,
+            Message.receiver_id == current_user.id,
+            Message.read == False
+        ).count()
+        
+        conversations_data.append({
+            "id": conv.id,
+            "participant_id": participant.id,
+            "participant_name": f"{participant.first_name} {participant.last_name}",
+            "participant_email": participant.email,
+            "last_message": conv.last_message,
+            "last_message_at": conv.last_message_at,
+            "unread_count": unread_count
+        })
+    
+    # Sort by last message time
+    conversations_data.sort(key=lambda x: x["last_message_at"], reverse=True)
+    
+    return conversations_data
+
+@app.get("/api/conversations/{user_id}/messages", response_model=list[MessageResponse])
+def get_conversation_messages(
+    user_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get all messages in a conversation with a specific user"""
+    # Find or create conversation
+    conversation = db.query(Conversation).filter(
+        ((Conversation.user1_id == current_user.id) & (Conversation.user2_id == user_id)) |
+        ((Conversation.user1_id == user_id) & (Conversation.user2_id == current_user.id))
+    ).first()
+    
+    if not conversation:
+        # Create new conversation
+        conversation = Conversation(
+            user1_id=current_user.id,
+            user2_id=user_id,
+            last_message=None
+        )
+        db.add(conversation)
+        db.commit()
+        db.refresh(conversation)
+        return []
+    
+    # Get all messages in this conversation
+    messages = db.query(Message).filter(
+        Message.conversation_id == conversation.id
+    ).order_by(Message.created_at).all()
+    
+    # Mark messages as read
+    db.query(Message).filter(
+        Message.conversation_id == conversation.id,
+        Message.receiver_id == current_user.id,
+        Message.read == False
+    ).update({"read": True})
+    db.commit()
+    
+    return messages
+
+@app.post("/api/messages", response_model=MessageResponse)
+def send_message(
+    message_data: MessageCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Send a message to another user"""
+    # Verify receiver exists
+    receiver = db.query(User).filter(User.id == message_data.receiver_id).first()
+    if not receiver:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Receiver not found"
+        )
+    
+    # Find or create conversation
+    conversation = db.query(Conversation).filter(
+        ((Conversation.user1_id == current_user.id) & (Conversation.user2_id == message_data.receiver_id)) |
+        ((Conversation.user1_id == message_data.receiver_id) & (Conversation.user2_id == current_user.id))
+    ).first()
+    
+    if not conversation:
+        conversation = Conversation(
+            user1_id=current_user.id,
+            user2_id=message_data.receiver_id,
+            last_message=message_data.content[:100],
+            last_message_at=datetime.utcnow()
+        )
+        db.add(conversation)
+        db.commit()
+        db.refresh(conversation)
+    else:
+        # Update conversation
+        conversation.last_message = message_data.content[:100]
+        conversation.last_message_at = datetime.utcnow()
+        db.commit()
+    
+    # Create message
+    message = Message(
+        conversation_id=conversation.id,
+        sender_id=current_user.id,
+        receiver_id=message_data.receiver_id,
+        content=message_data.content,
+        read=False
+    )
+    db.add(message)
+    db.commit()
+    db.refresh(message)
+    
+    # Create notification for receiver
+    notification = Notification(
+        user_id=message_data.receiver_id,
+        type="message",
+        title="New Message",
+        message=f"{current_user.first_name} {current_user.last_name} sent you a message",
+        related_id=str(conversation.id)
+    )
+    db.add(notification)
+    db.commit()
+    
+    return message
+
+@app.get("/api/users/buddies")
+def get_buddies(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get all users (potential buddies) for messaging"""
+    users = db.query(User).filter(User.id != current_user.id).all()
+    
+    return [{
+        "id": user.id,
+        "name": f"{user.first_name} {user.last_name}",
+        "email": user.email,
+        "location": user.location,
+        "points": user.points,
+        "rank": user.rank
+    } for user in users]
 
 if __name__ == "__main__":
     uvicorn.run(

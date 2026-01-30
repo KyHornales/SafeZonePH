@@ -7,6 +7,5 @@ export { default as TasksPage } from './TasksPage';
 export { default as ResourcesPage } from './ResourcesPage';
 export { default as PointsPage } from './PointsPage';
 export { default as ProfilePage } from './ProfilePage';
-export { default as ChatPage } from './ChatPage';
 export { default as CommunityHubPage } from './CommunityHubPage';
 export { default as SkillSharingPage } from './SkillSharingPage';

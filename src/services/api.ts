@@ -265,6 +265,169 @@ class ApiService {
 
     return this.handleResponse(response);
   }
+
+  // ==========================================
+  // BUDDY SESSION ENDPOINTS
+  // ==========================================
+
+  async createBuddySession(sessionData: {
+    buddyId?: number;
+    buddy_id?: number;
+    scheduledCheckInTime?: string;
+    check_in_interval?: number;
+    location?: string;
+    destination?: string;
+  }): Promise<ApiResponse<any>> {
+    const payload = {
+      buddy_id: sessionData.buddyId || sessionData.buddy_id,
+      scheduled_check_in_time: sessionData.scheduledCheckInTime,
+      check_in_interval: sessionData.check_in_interval || 30,
+      location: sessionData.location,
+      destination: sessionData.destination,
+    };
+    const response = await fetch(`${API_BASE_URL}/api/buddy/sessions`, {
+      method: 'POST',
+      headers: this.getHeaders(),
+      body: JSON.stringify(payload),
+    });
+    return this.handleResponse(response);
+  }
+
+  async getBuddySessions(): Promise<ApiResponse<any[]>> {
+    const response = await fetch(`${API_BASE_URL}/api/buddy/sessions`, {
+      headers: this.getHeaders(),
+    });
+    return this.handleResponse(response);
+  }
+
+  async getActiveBuddySession(): Promise<ApiResponse<any>> {
+    const response = await fetch(`${API_BASE_URL}/api/buddy/sessions/active`, {
+      headers: this.getHeaders(),
+    });
+    return this.handleResponse(response);
+  }
+
+  async getActiveBuddySessions(): Promise<ApiResponse<any[]>> {
+    const response = await fetch(`${API_BASE_URL}/api/buddy-sessions/active`, {
+      headers: this.getHeaders(),
+    });
+    return this.handleResponse(response);
+  }
+
+  async buddyCheckIn(sessionId: number, data?: { notes?: string; mood?: string }): Promise<ApiResponse<any>> {
+    const response = await fetch(`${API_BASE_URL}/api/buddy-sessions/${sessionId}/check-in`, {
+      method: 'POST',
+      headers: this.getHeaders(),
+      body: data ? JSON.stringify(data) : undefined,
+    });
+    return this.handleResponse(response);
+  }
+
+  async reportMissedCheckIn(sessionId: number): Promise<ApiResponse<any>> {
+    const response = await fetch(`${API_BASE_URL}/api/buddy/sessions/${sessionId}/missed`, {
+      method: 'POST',
+      headers: this.getHeaders(),
+    });
+    return this.handleResponse(response);
+  }
+
+  async triggerBuddyEmergency(sessionId: number): Promise<ApiResponse<any>> {
+    const response = await fetch(`${API_BASE_URL}/api/buddy/sessions/${sessionId}/emergency`, {
+      method: 'POST',
+      headers: this.getHeaders(),
+    });
+    return this.handleResponse(response);
+  }
+
+  async endBuddySession(sessionId: number): Promise<ApiResponse<any>> {
+    const response = await fetch(`${API_BASE_URL}/api/buddy/sessions/${sessionId}/end`, {
+      method: 'POST',
+      headers: this.getHeaders(),
+    });
+    return this.handleResponse(response);
+  }
+
+  // ==========================================
+  // NOTIFICATION ENDPOINTS
+  // ==========================================
+
+  async getNotifications(unreadOnly = false): Promise<ApiResponse<any[]>> {
+    const url = unreadOnly 
+      ? `${API_BASE_URL}/api/notifications?unread_only=true`
+      : `${API_BASE_URL}/api/notifications`;
+    const response = await fetch(url, {
+      headers: this.getHeaders(),
+    });
+    return this.handleResponse(response);
+  }
+
+  async getUnreadNotificationCount(): Promise<ApiResponse<{ unreadCount: number }>> {
+    const response = await fetch(`${API_BASE_URL}/api/notifications/unread-count`, {
+      headers: this.getHeaders(),
+    });
+    return this.handleResponse(response);
+  }
+
+  async markNotificationRead(notificationId: number): Promise<ApiResponse<any>> {
+    const response = await fetch(`${API_BASE_URL}/api/notifications/${notificationId}/read`, {
+      method: 'PUT',
+      headers: this.getHeaders(),
+    });
+    return this.handleResponse(response);
+  }
+
+  async markAllNotificationsRead(): Promise<ApiResponse<any>> {
+    const response = await fetch(`${API_BASE_URL}/api/notifications/read-all`, {
+      method: 'PUT',
+      headers: this.getHeaders(),
+    });
+    return this.handleResponse(response);
+  }
+
+  async deleteNotification(notificationId: number): Promise<ApiResponse<any>> {
+    const response = await fetch(`${API_BASE_URL}/api/notifications/${notificationId}`, {
+      method: 'DELETE',
+      headers: this.getHeaders(),
+    });
+    return this.handleResponse(response);
+  }
+
+  // ==========================================
+  // MESSAGING ENDPOINTS
+  // ==========================================
+
+  async getConversations(): Promise<ApiResponse<any[]>> {
+    const response = await fetch(`${API_BASE_URL}/api/conversations`, {
+      headers: this.getHeaders(),
+    });
+    return this.handleResponse(response);
+  }
+
+  async getConversationMessages(userId: number): Promise<ApiResponse<any[]>> {
+    const response = await fetch(`${API_BASE_URL}/api/conversations/${userId}/messages`, {
+      headers: this.getHeaders(),
+    });
+    return this.handleResponse(response);
+  }
+
+  async sendMessage(receiverId: number, content: string): Promise<ApiResponse<any>> {
+    const response = await fetch(`${API_BASE_URL}/api/messages`, {
+      method: 'POST',
+      headers: this.getHeaders(),
+      body: JSON.stringify({
+        receiver_id: receiverId,
+        content: content,
+      }),
+    });
+    return this.handleResponse(response);
+  }
+
+  async getBuddies(): Promise<ApiResponse<any[]>> {
+    const response = await fetch(`${API_BASE_URL}/api/users/buddies`, {
+      headers: this.getHeaders(),
+    });
+    return this.handleResponse(response);
+  }
 }
 
 export const apiService = new ApiService();
